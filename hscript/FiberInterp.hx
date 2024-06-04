@@ -406,7 +406,7 @@ class FiberInterp {
 			var has_async=false;
 			function run_block(){
 				while((next=copy.shift())!=null){
-					v = expr(e,(a_v)->{
+					v = expr(next,(a_v)->{
 						v=a_v;
 						run_block();
 					});
