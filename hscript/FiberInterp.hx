@@ -459,9 +459,9 @@ class FiberInterp {
 					case EField(e,f):
 						var obj = expr(e);
 						if( obj == null ) error(EInvalidAccess(f));
-						return fcall(obj,f,args);
+						return fcall(obj,f,final_args);
 					default:
-						return call(null,expr(e),args);
+						return call(null,expr(e),final_args);
 					}
 			}
 			var result=resolve_all(args,(cb)->{
