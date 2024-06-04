@@ -24,7 +24,7 @@ import haxe.PosInfos;
 import hscript.Expr;
 import haxe.Constraints.IMap;
 
-private enum Stop {
+enum Stop {
 	SBreak;
 	SContinue;
 	SReturn;
@@ -94,13 +94,16 @@ class FiberInterp {
 		return cast { fileName : "hscript", lineNumber : 0 };
 	}
 
-	function resolve_all(exprs:Array<{expr:Expr,v:Dynamic}>,cb) :Dynamic{
+	function resolve_all(exprs:Array<{expr:Expr,v:Dynamic}>,next,done) :Dynamic{
 		var length=exprs.length;
 		var has_async=false;
 		function decrease_len(){
 			length--;
 			if (length==0 && has_async){
-				cb();
+				var res2=next(done);
+				if (res2!=SYield){
+					done(res2);
+				}
 			}
 		}
 		for (i=>v in exprs){
@@ -119,7 +122,7 @@ class FiberInterp {
 		if (has_async){
 			return SYield;
 		} else {
-			return true;
+			return next(done);
 		}
 		
 	}
@@ -127,16 +130,11 @@ class FiberInterp {
 	function set_binop(op,func:(a:Dynamic,b:Dynamic)->Dynamic){
 		binops.set(op,(e1,e2,cb)->{
 			var results=[{expr:e1,v:null},{expr:e2,v:null}];
-			var result=resolve_all(results,()->{
-				var res= func(results[0].v,results[1].v);
-				cb(res);
-			});
-			if (result==true){
+			var result=resolve_all(results,(cb)->{
 				var res= func(results[0].v,results[1].v);
 				return res;
-			} else {
-				return result;
-			}
+			},cb);
+			return result;
 		});
 	}
 
@@ -306,7 +304,7 @@ class FiberInterp {
 		}
 	}
 
-	public function execute( expr : Expr ) : Dynamic {
+	public function execute( expr : Expr,?done ) : Dynamic {
 		depth = 0;
 		#if haxe3
 		locals = new Map();
@@ -314,12 +312,12 @@ class FiberInterp {
 		locals = new Hash();
 		#end
 		declared = new Array();
-		return exprReturn(expr);
+		return exprReturn(expr,done);
 	}
 
-	function exprReturn(e) : Dynamic {
+	function exprReturn(e,done) : Dynamic {
 		try {
-			return expr(e);
+			return expr(e,done);
 		} catch( e : Stop ) {
 			switch( e ) {
 			case SBreak: throw "Invalid break";
@@ -453,33 +451,42 @@ class FiberInterp {
 		case ECall(e,params):
 			var args = new Array();
 			for( p in params )
-				args.push(expr(p));
-
-			switch( Tools.expr(e) ) {
-			case EField(e,f):
-				var obj = expr(e);
-				if( obj == null ) error(EInvalidAccess(f));
-				return fcall(obj,f,args);
-			default:
-				return call(null,expr(e),args);
+				args.push({expr:p,v:null});
+			var final_args=args.map(v->v.v);
+			final_args.push(done);
+			function invoke() {
+				switch( Tools.expr(e) ) {
+					case EField(e,f):
+						var obj = expr(e);
+						if( obj == null ) error(EInvalidAccess(f));
+						return fcall(obj,f,args);
+					default:
+						return call(null,expr(e),args);
+					}
 			}
+			var result=resolve_all(args,(cb)->{
+				return invoke();
+			},done);
+			
+
+			
 		case EIf(econd,e1,e2):
-			return if( expr(econd) == true ) expr(e1) else if( e2 == null ) null else expr(e2);
+			return if( expr(econd) == true ) expr(e1,done) else if( e2 == null ) null else expr(e2,done);
 		case EWhile(econd,e):
-			whileLoop(econd,e);
+			whileLoop(econd,e,done);
 			return null;
 		case EDoWhile(econd,e):
-			doWhileLoop(econd,e);
+			doWhileLoop(econd,e,done);
 			return null;
 		case EFor(v,it,e):
-			forLoop(v,it,e);
+			forLoop(v,it,e,done);
 			return null;
 		case EBreak:
 			throw SBreak;
 		case EContinue:
 			throw SContinue;
 		case EReturn(e):
-			returnValue = e == null ? null : expr(e);
+			returnValue = e == null ? null : expr(e,done);
 			throw SReturn;
 		case EFunction(params,fexpr,name,_):
 			var capturedLocals = duplicate(locals);
@@ -521,7 +528,7 @@ class FiberInterp {
 				var oldDecl = declared.length;
 				if( inTry )
 					try {
-						r = me.exprReturn(fexpr);
+						r = me.exprReturn(fexpr,done);
 					} catch( e : Dynamic ) {
 						restore(oldDecl);
 						me.locals = old;
@@ -533,7 +540,7 @@ class FiberInterp {
 						#end
 					}
 				else
-					r = me.exprReturn(fexpr);
+					r = me.exprReturn(fexpr,done);
 				restore(oldDecl);
 				me.locals = old;
 				me.depth = depth;
@@ -666,23 +673,68 @@ class FiberInterp {
 		return null;
 	}
 
-	function doWhileLoop(econd,e) {
+	function doWhileLoop(econd,e,done) {
 		var old = declared.length;
-		do {
-			if( !loopRun(() -> expr(e)) )
-				break;
+		function loop_done(){
+			restore(old);
+			done(null);
 		}
-		while( expr(econd) == true );
-		restore(old);
+		var res;
+		var had_async=false;
+		function loop(){
+			do {
+				res=loopRun((cb) -> expr(e,cb),loop);
+				switch res {
+					case SBreak:
+						break;
+					case SContinue:
+					case SYield:
+						had_async=true;
+						return res;
+					case SReturn:
+						throw SReturn;
+				}
+				//todo async cond
+			}while( expr(econd) == true );
+			//this will not run when expr was yielded;
+			loop_done();
+			return SReturn;
+		};
+		var exit_reason=loop();
+
+		return exit_reason;
 	}
 
-	function whileLoop(econd,e) {
+	function whileLoop(econd,e,done) {
 		var old = declared.length;
-		while( expr(econd) == true ) {
-			if( !loopRun(() -> expr(e)) )
-				break;
+		function loop_done(){
+			restore(old);
+			done(null);
 		}
-		restore(old);
+		var res;
+		var had_async=false;
+		function loop(){
+			while( expr(econd) == true ) {
+				res=loopRun((cb) -> expr(e,cb),loop);
+				switch res {
+					case SBreak:
+						break;
+					case SContinue:
+					case SYield:
+						had_async=true;
+						return res;
+					case SReturn:
+						throw SReturn;
+				}
+				//todo async cond
+			};
+			//this will not run when expr was yielded;
+			loop_done();
+			return SReturn;
+		};
+		var exit_reason=loop();
+
+		return exit_reason;
 	}
 
 	function makeIterator( v : Dynamic ) : Iterator<Dynamic> {
@@ -695,32 +747,58 @@ class FiberInterp {
 		return v;
 	}
 
-	function forLoop(n,it,e) {
+	function forLoop(n,it,e,done) {
 		var old = declared.length;
 		declared.push({ n : n, old : locals.get(n) });
 		var it = makeIterator(expr(it));
-		while( it.hasNext() ) {
-			locals.set(n,{ r : it.next() });
-			if( !loopRun(() -> expr(e)) )
-				break;
+		function loop() {
+			
+		
+			while( it.hasNext() ) {
+				var res=loopRun((cb) -> {
+					locals.set(n,{ r : it.next() });
+					expr(e,cb);
+				},loop);
+				switch (res) {
+					case SBreak:break;
+					case SYield:return SYield;
+					case SContinue:
+					case SReturn:throw res;
+				}
+			}
+			done(null);
+			restore(old);
+			return SReturn;
 		}
-		restore(old);
+		return loop();
 	}
 
-	inline function loopRun( f : Void -> Void ) {
+	/**
+	 * purpose: trap valid continue/break errors, cons no break as continue
+	 * @param f 
+	 * @param iter_done 
+	 * @return Stop
+	 */
+	function loopRun( f : (Dynamic) -> Dynamic,iter_done ):Stop {
 		var cont = true;
 		try {
-			f();
+			var res=f(iter_done);
+			if (res==SYield){
+				return SYield;
+			}
 		} catch( err : Stop ) {
 			switch( err ) {
 			case SContinue:
+				return SContinue;
 			case SBreak:
-				cont = false;
+				return SBreak;
 			case SReturn:
 				throw err;
+			case SYield:
+				return SYield;
 			}
 		}
-		return cont;
+		return SContinue;
 	}
 
 	inline function isMap(o:Dynamic):Bool {

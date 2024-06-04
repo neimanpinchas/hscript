@@ -1,0 +1,4 @@
+-main RunScriptFiber
+--js test.js
+-lib hscript
+-dce no
