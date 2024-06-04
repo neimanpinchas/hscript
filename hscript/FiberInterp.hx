@@ -452,9 +452,9 @@ class FiberInterp {
 			var args = new Array();
 			for( p in params )
 				args.push({expr:p,v:null});
-			var final_args=args.map(v->v.v);
-			final_args.push(done);
 			function invoke() {
+				var final_args=args.map(v->v.v);
+				final_args.push(done);	
 				switch( Tools.expr(e) ) {
 					case EField(e,f):
 						var obj = expr(e);
@@ -465,8 +465,10 @@ class FiberInterp {
 					}
 			}
 			var result=resolve_all(args,(cb)->{
+				
 				return invoke();
 			},done);
+			return result;
 			
 
 			
