@@ -393,8 +393,12 @@ class FiberInterp {
 			return resolve(id);
 		case EVar(n,_,e):
 			declared.push({ n : n, old : locals.get(n) });
-			locals.set(n,{ r : (e == null)?null:expr(e) });
-			return null;
+			var ea=[{expr:expr(e),v:null}];
+			return resolve_all(ea,(cb)->{
+
+				locals.set(n,{ r : (e == null)?null:ea[0].v });
+				return null;
+			},done);
 		case EParent(e):
 			return expr(e);
 		case EBlock(exprs):
