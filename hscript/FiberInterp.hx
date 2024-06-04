@@ -393,7 +393,7 @@ class FiberInterp {
 			return resolve(id);
 		case EVar(n,_,e):
 			declared.push({ n : n, old : locals.get(n) });
-			var ea=[{expr:expr(e),v:null}];
+			var ea=[{expr:e,v:null}];
 			return resolve_all(ea,(cb)->{
 
 				locals.set(n,{ r : (e == null)?null:ea[0].v });
