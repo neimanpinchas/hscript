@@ -28,6 +28,7 @@ private enum Stop {
 	SBreak;
 	SContinue;
 	SReturn;
+	SYield;
 }
 
 class FiberInterp {
@@ -35,7 +36,7 @@ class FiberInterp {
 	#if haxe3
 	public var variables : Map<String,Dynamic>;
 	var locals : Map<String,{ r : Dynamic }>;
-	var binops : Map<String, Expr -> Expr -> Dynamic >;
+	var binops : Map<String, (Expr , Expr , Dynamic->Void)-> Dynamic >;
 	#else
 	public var variables : Hash<Dynamic>;
 	var locals : Hash<{ r : Dynamic }>;
@@ -93,6 +94,52 @@ class FiberInterp {
 		return cast { fileName : "hscript", lineNumber : 0 };
 	}
 
+	function resolve_all(exprs:Array<{expr:Expr,v:Dynamic}>,cb) :Dynamic{
+		var length=exprs.length;
+		var has_async=false;
+		function decrease_len(){
+			length--;
+			if (length==0 && has_async){
+				cb();
+			}
+		}
+		for (i=>v in exprs){
+			var expr_result=expr(v.expr,(result)->{
+				v.v=result;
+				decrease_len();
+			});
+			if (expr_result!=SYield){
+
+				v.v=expr_result;
+				decrease_len();
+			} else {
+				has_async=true;
+			}
+		}
+		if (has_async){
+			return SYield;
+		} else {
+			return true;
+		}
+		
+	}
+
+	function set_binop(op,func:(a:Dynamic,b:Dynamic)->Dynamic){
+		binops.set(op,(e1,e2,cb)->{
+			var results=[{expr:e1,v:null},{expr:e2,v:null}];
+			var result=resolve_all(results,()->{
+				var res= func(results[0].v,results[1].v);
+				cb(res);
+			});
+			if (result==true){
+				var res= func(results[0].v,results[1].v);
+				return res;
+			} else {
+				return result;
+			}
+		});
+	}
+
 	function initOps() {
 		var me = this;
 		#if haxe3
@@ -100,27 +147,27 @@ class FiberInterp {
 		#else
 		binops = new Hash();
 		#end
-		binops.set("+",function(e1,e2) return me.expr(e1) + me.expr(e2));
-		binops.set("-",function(e1,e2) return me.expr(e1) - me.expr(e2));
-		binops.set("*",function(e1,e2) return me.expr(e1) * me.expr(e2));
-		binops.set("/",function(e1,e2) return me.expr(e1) / me.expr(e2));
-		binops.set("%",function(e1,e2) return me.expr(e1) % me.expr(e2));
-		binops.set("&",function(e1,e2) return me.expr(e1) & me.expr(e2));
-		binops.set("|",function(e1,e2) return me.expr(e1) | me.expr(e2));
-		binops.set("^",function(e1,e2) return me.expr(e1) ^ me.expr(e2));
-		binops.set("<<",function(e1,e2) return me.expr(e1) << me.expr(e2));
-		binops.set(">>",function(e1,e2) return me.expr(e1) >> me.expr(e2));
-		binops.set(">>>",function(e1,e2) return me.expr(e1) >>> me.expr(e2));
-		binops.set("==",function(e1,e2) return me.expr(e1) == me.expr(e2));
-		binops.set("!=",function(e1,e2) return me.expr(e1) != me.expr(e2));
-		binops.set(">=",function(e1,e2) return me.expr(e1) >= me.expr(e2));
-		binops.set("<=",function(e1,e2) return me.expr(e1) <= me.expr(e2));
-		binops.set(">",function(e1,e2) return me.expr(e1) > me.expr(e2));
-		binops.set("<",function(e1,e2) return me.expr(e1) < me.expr(e2));
-		binops.set("||",function(e1,e2) return me.expr(e1) == true || me.expr(e2) == true);
-		binops.set("&&",function(e1,e2) return me.expr(e1) == true && me.expr(e2) == true);
+		set_binop("+",function(e1,e2) return (e1) + (e2));
+		set_binop("-",function(e1,e2) return (e1) - (e2));
+		set_binop("*",function(e1,e2) return (e1) * (e2));
+		set_binop("/",function(e1,e2) return (e1) / (e2));
+		set_binop("%",function(e1,e2) return (e1) % (e2));
+		set_binop("&",function(e1,e2) return (e1) & (e2));
+		set_binop("|",function(e1,e2) return (e1) | (e2));
+		set_binop("^",function(e1,e2) return (e1) ^ (e2));
+		set_binop("<<",function(e1,e2) return (e1) << (e2));
+		set_binop(">>",function(e1,e2) return (e1) >> (e2));
+		set_binop(">>>",function(e1,e2) return (e1) >>> (e2));
+		set_binop("==",function(e1,e2) return (e1) == (e2));
+		set_binop("!=",function(e1,e2) return (e1) != (e2));
+		set_binop(">=",function(e1,e2) return (e1) >= (e2));
+		set_binop("<=",function(e1,e2) return (e1) <= (e2));
+		set_binop(">",function(e1,e2) return (e1) > (e2));
+		set_binop("<",function(e1,e2) return (e1) < (e2));
+		set_binop("||",function(e1,e2) return (e1) == true || (e2) == true);
+		set_binop("&&",function(e1,e2) return (e1) == true && (e2) == true);
 		binops.set("=",assign);
-		binops.set("...",function(e1,e2) return new #if (haxe_211 || haxe3) IntIterator #else IntIter #end(me.expr(e1),me.expr(e2)));
+		set_binop("...",function(e1,e2) return new #if (haxe_211 || haxe3) IntIterator #else IntIter #end((e1),(e2)));
 		assignOp("+=",function(v1:Dynamic,v2:Dynamic) return v1 + v2);
 		assignOp("-=",function(v1:Float,v2:Float) return v1 - v2);
 		assignOp("*=",function(v1:Float,v2:Float) return v1 * v2);
@@ -139,7 +186,7 @@ class FiberInterp {
 	}
 
 	function assign( e1 : Expr, e2 : Expr ,done:(Dynamic)->Void) : Dynamic {
-		expr(e2,function(v){
+		var expr_result=expr(e2,function(v){
 		switch( Tools.expr(e1) ) {
 		case EIdent(id):
 			var l = locals.get(id);
@@ -164,11 +211,16 @@ class FiberInterp {
 		}
 		done(v);
 	});
+	return expr_result;
 	}
 
 	function assignOp( op, fop : Dynamic -> Dynamic -> Dynamic ) {
 		var me = this;
-		binops.set(op,function(e1,e2) return me.evalAssignOp(op,fop,e1,e2));
+		
+		binops.set(op,function(e1,e2,cb) {
+			var expr_result=me.evalAssignOp(op,fop,e1,e2,cb);
+			return expr_result;
+		});
 	}
 
 	function evalAssignOp(op,fop,e1,e2,done:(Dynamic)->Void) : Dynamic {
@@ -271,6 +323,7 @@ class FiberInterp {
 		} catch( e : Stop ) {
 			switch( e ) {
 			case SBreak: throw "Invalid break";
+			case SYield: throw "Invalid yield";
 			case SContinue: throw "Invalid continue";
 			case SReturn:
 				var v = returnValue;
@@ -349,8 +402,26 @@ class FiberInterp {
 		case EBlock(exprs):
 			var old = declared.length;
 			var v = null;
-			for( e in exprs )
-				v = expr(e);
+			var copy=exprs.copy();
+			
+			var next:Expr;
+			var has_async=false;
+			function run_block(){
+				while((next=copy.shift())!=null){
+					v = expr(e,(a_v)->{
+						v=a_v;
+						run_block();
+					});
+					if (v==SYield){
+						has_async=true;
+						return;
+					}
+				}
+				if (has_async){
+					done(v);
+				}
+			}
+			run_block();
 			restore(old);
 			return v;
 		case EField(e,f):
@@ -358,7 +429,8 @@ class FiberInterp {
 		case EBinop(op,e1,e2):
 			var fop = binops.get(op);
 			if( fop == null ) error(EInvalidOp(op));
-			return fop(e1,e2);
+			var result=fop(e1,e2,done);
+			return result;
 		case EUnop(op,prefix,e):
 			switch(op) {
 			case "!":
