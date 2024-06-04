@@ -420,7 +420,11 @@ class FiberInterp {
 					}
 				}
 				if (has_async){
-					done(v);
+					if (done!=null){
+						done(v);
+					} else {
+						trace("block finished done callback is not defined");
+					}
 				}
 			}
 			run_block();
