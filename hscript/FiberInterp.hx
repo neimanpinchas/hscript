@@ -420,7 +420,11 @@ class FiberInterp {
 					while((next=copy.shift())!=null){
 						v = expr(next,(a_v)->{
 							v=a_v;
-							run_block();
+							if (v!=SReturn){
+								run_block();
+							} else {
+								done(v);
+							}
 						});
 						if (v==SYield){
 							has_async=true;
