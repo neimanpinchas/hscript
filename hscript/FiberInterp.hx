@@ -557,14 +557,12 @@ class FiberInterp {
 					restore(oldDecl);
 					me.locals = old;
 					me.depth = depth;
-					r=v;
-					
 				}
 				if( inTry )
 					try {
 						r = me.exprReturn(fexpr,function(v){
 							cleanup(v);
-							done(r);
+							done(v);
 						});
 					} catch( e : Dynamic ) {
 						//todo signal error result
@@ -578,7 +576,7 @@ class FiberInterp {
 				else
 					r = me.exprReturn(fexpr,function(v){
 						cleanup(v);
-						done(r);
+						done(v);
 					});
 				if (r!=SYield){
 					cleanup(r);
