@@ -317,7 +317,13 @@ class FiberInterp {
 
 	function exprReturn(e,done) : Dynamic {
 		try {
-			return expr(e,done);
+			return expr(e,function(v){
+				if (v==SReturn){
+					var v = returnValue;
+					returnValue = null;
+					done(v);
+				}
+			});
 		} catch( e : Stop ) {
 			switch( e ) {
 			case SBreak: throw "Invalid break";
@@ -409,18 +415,26 @@ class FiberInterp {
 			var next:Expr;
 			var has_async=false;
 			function run_block(){
-				while((next=copy.shift())!=null){
-					v = expr(next,(a_v)->{
-						v=a_v;
-						run_block();
-					});
-					if (v==SYield){
-						has_async=true;
-						return;
+				try {
+
+					while((next=copy.shift())!=null){
+						v = expr(next,(a_v)->{
+							v=a_v;
+							run_block();
+						});
+						if (v==SYield){
+							has_async=true;
+							return;
+						}
+					}
+				} catch(ex:Stop){
+					if (ex==SReturn){
+						done(ex);
 					}
 				}
 				if (has_async){
 					if (done!=null){
+						restore(old);
 						done(v);
 					} else {
 						trace("block finished done callback is not defined");
@@ -428,7 +442,7 @@ class FiberInterp {
 				}
 			}
 			run_block();
-			restore(old);
+			if (v!=SYield) restore(old);
 			return v;
 		case EField(e,f):
 			return get(expr(e),f);
@@ -496,7 +510,10 @@ class FiberInterp {
 		case EContinue:
 			throw SContinue;
 		case EReturn(e):
-			returnValue = e == null ? null : expr(e,done);
+			var ea=[{expr:e,v:null}];
+			resolve_all(ea,(v)->{
+				returnValue=ea[0].v;
+			},(v)->done(SReturn));
 			throw SReturn;
 		case EFunction(params,fexpr,name,_):
 			var capturedLocals = duplicate(locals);
