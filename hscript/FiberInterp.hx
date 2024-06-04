@@ -536,13 +536,22 @@ class FiberInterp {
 					me.locals.set(params[i].name,{ r : args[i] });
 				var r = null;
 				var oldDecl = declared.length;
+				function cleanup(v){
+					restore(oldDecl);
+					me.locals = old;
+					me.depth = depth;
+					r=v;
+					
+				}
 				if( inTry )
 					try {
-						r = me.exprReturn(fexpr,done);
+						r = me.exprReturn(fexpr,function(v){
+							cleanup(v);
+							done(r);
+						});
 					} catch( e : Dynamic ) {
-						restore(oldDecl);
-						me.locals = old;
-						me.depth = depth;
+						//todo signal error result
+						cleanup(e);
 						#if neko
 						neko.Lib.rethrow(e);
 						#else
@@ -550,10 +559,13 @@ class FiberInterp {
 						#end
 					}
 				else
-					r = me.exprReturn(fexpr,done);
-				restore(oldDecl);
-				me.locals = old;
-				me.depth = depth;
+					r = me.exprReturn(fexpr,function(v){
+						cleanup(v);
+						done(r);
+					});
+				if (r!=SYield){
+					cleanup(r);
+				}
 				return r;
 			};
 			var f = Reflect.makeVarArgs(f);
