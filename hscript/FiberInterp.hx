@@ -317,7 +317,13 @@ class FiberInterp {
 
 	function exprReturn(e,done) : Dynamic {
 		try {
-			return expr(e,done);
+			return expr(e,function(v){
+				if (v==SReturn){
+					var v = returnValue;
+					returnValue = null;
+					done(v);
+				}
+			});
 		} catch( e : Stop ) {
 			switch( e ) {
 			case SBreak: throw "Invalid break";
@@ -393,8 +399,12 @@ class FiberInterp {
 			return resolve(id);
 		case EVar(n,_,e):
 			declared.push({ n : n, old : locals.get(n) });
-			locals.set(n,{ r : (e == null)?null:expr(e) });
-			return null;
+			var ea=[{expr:e,v:null}];
+			return resolve_all(ea,(cb)->{
+
+				locals.set(n,{ r : (e == null)?null:ea[0].v });
+				return null;
+			},done);
 		case EParent(e):
 			return expr(e);
 		case EBlock(exprs):
@@ -405,22 +415,37 @@ class FiberInterp {
 			var next:Expr;
 			var has_async=false;
 			function run_block(){
-				while((next=copy.shift())!=null){
-					v = expr(next,(a_v)->{
-						v=a_v;
-						run_block();
-					});
-					if (v==SYield){
-						has_async=true;
-						return;
+				try {
+					while((next=copy.shift())!=null){
+						v = expr(next,(a_v)->{
+							v=a_v;
+							if (v!=SReturn){
+								run_block();
+							} else {
+								done(v);
+							}
+						});
+						if (v==SYield){
+							has_async=true;
+							return;
+						}
+					}
+				} catch(ex:Stop){
+					if (ex==SReturn){
+						done(ex);
 					}
 				}
 				if (has_async){
-					done(v);
+					if (done!=null){
+						restore(old);
+						done(v);
+					} else {
+						trace("block finished done callback is not defined");
+					}
 				}
 			}
 			run_block();
-			restore(old);
+			if (v!=SYield) restore(old);
 			return v;
 		case EField(e,f):
 			return get(expr(e),f);
@@ -488,7 +513,10 @@ class FiberInterp {
 		case EContinue:
 			throw SContinue;
 		case EReturn(e):
-			returnValue = e == null ? null : expr(e,done);
+			var ea=[{expr:e,v:null}];
+			resolve_all(ea,(v)->{
+				returnValue=ea[0].v;
+			},(v)->done(SReturn));
 			throw SReturn;
 		case EFunction(params,fexpr,name,_):
 			var capturedLocals = duplicate(locals);
@@ -528,13 +556,20 @@ class FiberInterp {
 					me.locals.set(params[i].name,{ r : args[i] });
 				var r = null;
 				var oldDecl = declared.length;
+				function cleanup(v){
+					restore(oldDecl);
+					me.locals = old;
+					me.depth = depth;
+				}
 				if( inTry )
 					try {
-						r = me.exprReturn(fexpr,done);
+						r = me.exprReturn(fexpr,function(v){
+							cleanup(v);
+							done(v);
+						});
 					} catch( e : Dynamic ) {
-						restore(oldDecl);
-						me.locals = old;
-						me.depth = depth;
+						//todo signal error result
+						cleanup(e);
 						#if neko
 						neko.Lib.rethrow(e);
 						#else
@@ -542,10 +577,13 @@ class FiberInterp {
 						#end
 					}
 				else
-					r = me.exprReturn(fexpr,done);
-				restore(oldDecl);
-				me.locals = old;
-				me.depth = depth;
+					r = me.exprReturn(fexpr,function(v){
+						cleanup(v);
+						done(v);
+					});
+				if (r!=SYield){
+					cleanup(r);
+				}
 				return r;
 			};
 			var f = Reflect.makeVarArgs(f);
