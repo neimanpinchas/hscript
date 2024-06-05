@@ -93,7 +93,7 @@ class RunScriptFiber {
 			"Unserializer": haxe.Unserializer
 		});
 		
-		info(interp.execute(program));		
+		info(interp.execute(program,(v)->trace("excution done!")));		
 	}
 	
 	static function printHelp(exit:Bool = true) {
