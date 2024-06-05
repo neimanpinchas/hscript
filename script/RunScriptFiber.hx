@@ -64,9 +64,11 @@ class RunScriptFiber {
 		interp.variables.set("Array", Array);
 		interp.variables.set("DateTools", DateTools);
 		interp.variables.set("sleep",function(ms,done) {
+			trace(ms,done);
 			var t=new Timer(ms);
 			t.run=function(){
 				done("OK");
+				t.stop();
 			}
 			return FiberInterp.Stop.SYield;
 		});
